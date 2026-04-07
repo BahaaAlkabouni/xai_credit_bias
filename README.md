@@ -46,7 +46,7 @@ xai_credit_bias/
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/<your-username>/xai_credit_bias.git
+git clone https://github.com/<BahaaAlkabouni>/xai_credit_bias.git
 cd xai_credit_bias
 
 # 2. Create a virtual environment (optional but recommended)
