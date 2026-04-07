@@ -60,7 +60,9 @@ numeric_cols = [
 # One-hot encode categorical columns
 X = pd.get_dummies(df[categorical_cols + numeric_cols],
                    columns=categorical_cols,
-                   drop_first=True)
+                   drop_first=True,
+                   dtype=float)
+
 
 feature_names = list(X.columns)
 
@@ -197,9 +199,7 @@ for feat in top_feats:
         print(f"  Age — mean: {means[feat]:.4f}, std: {stds[feat]:.4f}")
 
 
-# ============================================================
 # STEP 7: LIME — COMPARE AGE INFLUENCE: YOUNG vs OLDER
-# ============================================================
 
 print("\nComparing LIME age weights: young vs older applicants...")
 
@@ -214,10 +214,9 @@ for i in range(min(50, len(X_test))):
     exp = lime_explainer.explain_instance(
         data_row=row,
         predict_fn=model.predict_proba,
-        num_features=8,
+        num_features=len(feature_names),
         num_samples=3000
     )
-
     for feat, weight in exp.as_list():
         if "age" in feat.lower():
             if age < 30:
@@ -246,43 +245,36 @@ print(f"  Young — mean age weight: {np.mean(young_weights):.4f}")
 print(f"  Older — mean age weight: {np.mean(older_weights):.4f}")
 
 
-# ============================================================
 # STEP 8: DiCE — COUNTERFACTUAL EXPLANATIONS
-# ============================================================
-
 print("\nRunning DiCE counterfactual explanations...")
 
-# DiCE needs the training data with the target column included
-train_df_for_dice = X_train.copy()
-train_df_for_dice["credit_risk"] = y_train.values
+X_train_dice = X_train.astype(float)
+X_test_dice  = X_test.astype(float)
 
-# Tell DiCE which features are continuous
+train_df_for_dice = X_train_dice.copy()
+train_df_for_dice["credit_risk"] = y_train.values.astype(float)
+
 dice_data = dice_ml.Data(
     dataframe=train_df_for_dice,
     continuous_features=numeric_cols,
     outcome_name="credit_risk"
 )
 
-# Wrap the trained model for DiCE
 dice_model = dice_ml.Model(model=model, backend="sklearn")
+dice_explainer = dice_ml.Dice(dice_data, dice_model, method="random")
 
-# Create the DiCE explainer
-dice_explainer = Dice(dice_data, dice_model, method="random")
+bad_credit_instances = X_test_dice[model.predict(X_test_dice.values) == 1]
+query = bad_credit_instances.iloc[[0]].reset_index(drop=True)
 
-# Find a test instance predicted as Bad Credit to explain
-bad_credit_instances = X_test[model.predict(X_test.values) == 1]
-query = bad_credit_instances.iloc[[0]]
-
-# Generate 4 counterfactuals: what needs to change to get Good Credit?
 cf_result = dice_explainer.generate_counterfactuals(
     query,
     total_CFs=4,
-    desired_class="opposite",
+    desired_class=0,
     random_seed=42
 )
 
-cf_df  = cf_result.cf_examples_list[0].final_cfs_df
-orig   = query[numeric_cols].values[0]
+cf_df = cf_result.cf_examples_list[0].final_cfs_df
+orig = query[numeric_cols].values[0]
 cf_vals = cf_df[numeric_cols].values
 
 print("\n  Original instance:")
@@ -309,25 +301,21 @@ plt.close()
 print("  Saved: figures/dice_counterfactuals.png")
 
 
-# ============================================================
 # STEP 9: DiCE — AGE PERTURBATION TEST
-# ============================================================
 
 print("\nRunning age perturbation test...")
 
-# Find a young applicant predicted as Bad Credit
-young_bad = X_test[(model.predict(X_test.values) == 1) & (X_test["age"] < 30)]
+young_bad = X_test_dice[(model.predict(X_test_dice.values) == 1) & (X_test_dice["age"] < 30)]
 
 if young_bad.empty:
     print("  No young bad-credit applicants found in test set.")
 else:
-    test_row = young_bad.iloc[[0]].copy()
+    test_row = young_bad.iloc[[0]].reset_index(drop=True).copy()
     base_age = int(test_row["age"].values[0])
 
     ages  = list(range(base_age, 65))
     probs = []
 
-    # Change only the age and re-predict — everything else stays the same
     for age in ages:
         temp = test_row.copy()
         temp["age"] = age
@@ -363,8 +351,6 @@ else:
     print(f"  Base age: {base_age} | Prediction flips at age: {flip_age}")
 
 
-# ============================================================
 # DONE
-# ============================================================
 
 print("\nAll done! All figures saved in ./figures/")
